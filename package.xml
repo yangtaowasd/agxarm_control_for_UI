@@ -6,7 +6,7 @@
   <maintainer email="yang@todo.todo">yang</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_python</buildtool_depend>
-  <exec_depend>agxarm_control_by_gamecontroller</exec_depend>
+  <exec_depend>nero_arm_control</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>

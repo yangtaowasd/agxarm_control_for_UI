@@ -27,7 +27,7 @@ def nodes(context):
     ns = value('arm_namespace')
     if ns == '__robot__':
         ns = model
-    share = Path(get_package_share_directory('agxarm_control_by_gamecontroller'))
+    share = Path(get_package_share_directory('nero_arm_control'))
     config = value('controller_config') or str(share / 'config' / (model + '.yaml'))
     common = value('common_config') or str(share / 'config' / 'common.yaml')
     result = [Node(
@@ -38,7 +38,7 @@ def nodes(context):
     if flag('start_controller'):
         result.extend([
             Node(
-                package='agxarm_control_by_gamecontroller', executable='main.py',
+                package='nero_arm_control', executable='main.py',
                 name='arm_keyboard_controller', namespace=ns, output='screen',
                 parameters=[common, config, {
                     'robot_model': model, 'can_interface': value('can_interface'),
@@ -50,7 +50,7 @@ def nodes(context):
                 }],
             ),
             Node(
-                package='agxarm_control_by_gamecontroller',
+                package='nero_arm_control',
                 executable='momentum_observer_node.py', name='arm_momentum_observer',
                 namespace=ns, output='screen',
                 parameters=[common, config, {'robot_model': model}],

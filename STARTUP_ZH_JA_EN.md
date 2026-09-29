@@ -1,3 +1,19 @@
+# 当前操作 / 現在の操作 / Current operation
+
+四个按钮：**关节遥控 / 阻抗控制 / 导纳控制 / 笛卡尔控制**。
+取消“启用 GUI 操作”勾选。连接且反馈正常后，直接按住点动；松开停止输入。
+模式确认后可继续操作；窗口失焦或故障会释放指令，恢复后重新按下即可。
+
+4つのモード：**関節操作 / インピーダンス制御 / アドミッタンス制御 / 直交座標制御**。
+GUI 有効化チェックは不要です。接続・状態が正常なら押している間ジョグします。
+離すと入力を解除します。非アクティブ化や異常後は、復旧後に改めて押してください。
+
+Four modes: **Joint teleoperation / Impedance control / Admittance control / Cartesian control**.
+No enable checkbox. When ready, hold to jog and release to clear input. After a
+focus loss or fault, press again after recovery; old commands never resume.
+Mode selection waits for backend confirmation. An 8-second confirmation timeout
+requires reconnecting; E-stop remains available.
+
 # 三语操作说明 / 3言語操作ガイド / Trilingual guide
 
 ## 中文
@@ -79,3 +95,21 @@ for build instructions, control interfaces, safety boundaries and diagnostics.
 Jog and mode requests validate state at command entry. Admittance/hybrid reject jogs;
 joint/Cartesian intents must match the active mode. Mode changes disarm input;
 joint/IK toggles block new commands until confirmed. E-stop remains available.
+
+## 一键完整启动 / 一括起動 / Full-stack startup
+
+四个项目根目录均可执行 / 各パッケージのルートで実行可能 / From any of the four package roots:
+
+```bash
+./start_full_stack.sh                 # 空运行 / ドライラン / Dry run
+./start_full_stack.sh --hardware      # 真机使能 / 実機有効化 / Enable hardware
+./start_full_stack.sh --skip-build    # 跳过构建 / ビルド省略 / Skip build
+```
+
+真机模式重新配置 CAN（默认 can0，1 Mbit/s），请先停止旧控制器。
+実機モードは CAN（既定 can0、1 Mbit/s）を再設定します。既存コントローラーを停止してください。
+Hardware mode reconfigures CAN (default can0, 1 Mbit/s); stop existing controllers first.
+不启动实体键盘，不自动回零或复位急停。追加 language:=ja、controller_config:=路径等参数。
+物理キーボード・自動原点復帰・非常停止解除は実行しません。
+No physical keyboard reader, automatic homing or E-stop reset. Append language:=ja
+or controller_config:=/absolute/path/nero.yaml as needed.

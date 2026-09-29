@@ -1,8 +1,47 @@
+# 四种操作模式与直接点动 / Four modes and direct jogging
+
+界面只有四个操作入口：关节遥控、阻抗控制、导纳控制、笛卡尔控制。
+The four operator choices are Joint teleoperation, Impedance control,
+Admittance control and Cartesian control.
+
+| GUI | 后端确认状态 / Confirmed backend state |
+| --- | --- |
+| 关节遥控 / Joint teleoperation | interaction_mode=normal, control_mode=joint |
+| 阻抗控制 / Impedance control | interaction_mode=impedance |
+| 导纳控制 / Admittance control | interaction_mode=admittance |
+| 笛卡尔控制 / Cartesian control | interaction_mode=normal, control_mode=ik |
+
+不再需要勾选“启用 GUI 操作”。连接后状态正常即可按住点动、松开停止输入；
+连续点击不会取消操作资格。失焦、断连、反馈过期、急停或输入冲突仍清除当前指令，
+恢复后必须重新按下按钮，不自动续发之前的动作。
+No enable checkbox is required. When connected and ready, press and hold to jog;
+release clears input. Repeated clicks do not latch controls off. Focus loss,
+disconnection, stale feedback, E-stop and input conflicts still clear held input.
+Recovery requires a fresh press, never automatic replay of a previous command.
+
+关节/笛卡尔选择先请求 normal（若需要），收到成功响应和对应状态后才发送一次
+关节/IK 切换脉冲。再次选择当前模式不反向切换。确认期间暂时锁定指令，8 秒
+未确认时显示超时并要求重连；不会盲目重发切换。模式确认后不需要额外启用。
+Joint/Cartesian selection first enters normal when needed, then sends one toggle
+only after service success and matching state. Selecting the current mode is
+idempotent. Commands pause during confirmation; an 8-second timeout requires
+reconnection and never retries an uncertain toggle. No extra enable step follows.
+
+后端控制律、topic/service、25 键协议、增益、力矩和速度限制均不改变。
+释放按键只停止累积目标，不撤销已规划运动，不退出柔顺模式或禁用电机。
+Backend laws, topics/services, the 25-key protocol, gains and safety limits are
+unchanged. Releasing input stops target increments; it does not cancel planned
+motion, exit compliant modes or disable motors.
+
+回归测试 / Regression tests: `test/test_direct_control.py` covers direct/repeated
+jogging, all four mode selections, reverse and idempotent transitions, focus loss,
+confirmation timeout and service rejection with a hardware-free DDS controller.
+
 # 项目学习指南 / Project Study Guide
 
 ## 1. 目标 / Goal
 
-为 `agxarm_control_by_gamecontroller` 提供独立桌面操作包，默认 Nero，同时支持 Piper-L。
+为 `nero_arm_control` 提供独立桌面操作包，默认 Nero，同时支持 Piper-L。
 GUI 负责操作意图和状态呈现，原控制器继续负责运动学、控制律、限幅和 CAN。
 
 Provide an independent desktop package for the existing controller, defaulting to
@@ -119,7 +158,7 @@ unknown outcome and keeps input locked, without automatically retrying.
 | Backend `step_rad` | 0.005 rad | Joint target increment per control tick |
 | Backend `control_rate` | 100 Hz | Configured in common YAML |
 | Backend `interaction_feedback_timeout` | 0.10 s | SDK timestamp watchdog |
-| GUI command enable | off | Explicitly enable after connection/mode request |
+| GUI command entry | direct | No checkbox; each press checks current state |
 
 其余阻抗/导纳增益、力矩限幅和速度限幅直接来自控制包 YAML，不在 GUI 中复制默认值。
 `execute_motion:=false` 不能改变已运行控制器的实机状态，GUI 以接收到的状态为准。
@@ -130,7 +169,7 @@ running controller. The GUI displays the received hardware/dry-run state.
 
 ## 7. 安全边界与已知风险 / Safety boundaries and known risks
 
-- 未勾选使能时不发送周期键状态；多发布者冲突时取消使能。DDS 发现存在延迟，这不是
+- 未按住按钮时不发送周期点动输入；多发布者冲突时释放输入。DDS 发现存在延迟，这不是
   排他控制锁；必须保证同一控制器只有一个实际输入源。
   Monitoring emits no periodic keys. Publisher conflicts disarm, but discovery is
   delayed and is not an ownership lock. Use one operator input source.
@@ -140,7 +179,7 @@ running controller. The GUI displays the received hardware/dry-run state.
 - 清零键值只停止累积点动目标，不撤销已规划运动、不退出阻抗/导纳，也不禁用电机。
   Zero keys stop target increments; they do not cancel planned motion, exit compliant
   modes or disable motors.
-- 软件急停无需 GUI 使能或新鲜反馈，但依赖 ROS 传输和控制器循环。急停后本地锁定；
+- 软件急停无需新鲜反馈，但依赖 ROS 传输和控制器循环。急停后本地锁定；
   按原项目流程恢复控制器后重连 GUI。不能通过重连绕过控制器的急停状态。
   Software E-stop bypasses GUI arming/freshness but depends on ROS and the backend
   loop. Restore the backend by its existing procedure, then reconnect; a controller
@@ -216,13 +255,13 @@ establish physical control stability.
 
 实现合同以同级控制包源码为准 / Interface contracts are defined in sibling source:
 
-- `../agxarm_control_by_gamecontroller/armbycontroller/teleop/keyboard.py`
-- `../agxarm_control_by_gamecontroller/armbycontroller/ros/control_cycle.py`
-- `../agxarm_control_by_gamecontroller/armbycontroller/ros/telemetry.py`
-- `../agxarm_control_by_gamecontroller/armbycontroller/api/interaction.py`
-- `../agxarm_control_by_gamecontroller/armbycontroller/ros/parameters.py`
-- `../agxarm_control_by_gamecontroller/config/common.yaml`, `config/nero.yaml`, `config/piper_l.yaml`
-- `../agxarm_control_by_gamecontroller/PROJECT_STUDY_GUIDE_ZH_EN.md`
+- `../nero_arm_control/nero_arm_control/teleop/keyboard.py`
+- `../nero_arm_control/nero_arm_control/ros/control_cycle.py`
+- `../nero_arm_control/nero_arm_control/ros/telemetry.py`
+- `../nero_arm_control/nero_arm_control/api/interaction.py`
+- `../nero_arm_control/nero_arm_control/ros/parameters.py`
+- `../nero_arm_control/config/common.yaml`, `config/nero.yaml`, `config/piper_l.yaml`
+- `../nero_arm_control/PROJECT_STUDY_GUIDE_ZH_EN.md`
 
 平台资料 / Platform references: [ROS 2 Humble](https://docs.ros.org/en/humble/),
 [Qt 5 Widgets](https://doc.qt.io/qt-5/qtwidgets-index.html).
@@ -264,3 +303,98 @@ arrives. An unconfirmed toggle remains locked; inspect the controller before rec
 Software E-stop bypasses normal command gating. DDS discovery and event-state delivery
 still have latency; these checks supplement the backend interlocks, not a hardware
 safety circuit or distributed ownership lock.
+
+## Nero 连携 / Nero integration
+
+GUI → `nero_arm_control` → `agx_arm_controllers` → `agx_arm_math`。
+GUI 直接复用 `nero_arm_control.teleop` 的 25 键协议；模式服务与状态 JSON
+通过 ROS 交互，GUI 不直接调用数值控制器或 SDK。
+The GUI reuses the 25-key protocol from `nero_arm_control.teleop`; mode services
+and JSON state cross ROS. It does not call numerical controllers or the SDK.
+
+`gui.launch.py` 和默认 YAML 编辑路径使用 `nero_arm_control` 的安装资源。
+构建 GUI 会通过 package.xml 依赖带上控制包及两个共享包。
+Launch and the YAML editor resolve installed Nero resources. Building up to the
+GUI includes the controller and its two shared dependencies.
+
+联合启动保持 execute_motion=false、move_home_on_start=false、
+reset_emergency_stop_on_start=false；不启动物理键盘发布者。
+Combined launch keeps motion, startup homing and emergency-stop reset disabled
+by default and does not start a physical keyboard publisher.
+普通键盘入口会启动另一个输入发布者，不能与 GUI 同时控制同一输入话题。
+Do not use the keyboard startup entry on the same input topic as GUI control.
+Nero namespace defaults to `/nero`; Piper-L uses `/piper_l`.
+
+```bash
+cd ~/demo_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-up-to agxarm_control_gui --cmake-force-configure --cmake-args -DAMENT_CMAKE_SYMLINK_INSTALL=OFF
+source install/setup.bash
+# 空运行联合启动 / Combined dry run
+ros2 launch agxarm_control_gui gui.launch.py start_controller:=true execute_motion:=false
+```
+
+接口 / Interfaces (relative to arm namespace): `arm_keyboard_state`
+(std_msgs/Int32MultiArray, 25 entries), `arm/interaction_state`
+(std_msgs/String, schema_version=1, reliable/transient-local depth 1),
+`arm_dynamics_state` and `arm_external_joint_torque` (sensor_msgs/JointState),
+`arm_control_event` (std_msgs/String); mode services
+`arm/set_{normal,impedance,admittance}_mode` use std_srvs/Trigger.
+保持原有断连、反馈过期、焦点丢失与多发布者互锁。混合模式仅显示状态，不新增入口。
+Existing disconnect, stale-feedback, focus-loss and competing-publisher interlocks
+remain in effect. Hybrid status is readable; no hybrid command entry is added.
+
+## 完整链路入口 / Full-stack entry
+
+四个包根目录均有 `start_full_stack.sh`，可从任意工作目录按路径执行。
+GUI 包保存公共实现，其他三个包转发到同级 GUI；仅适用于 `workspace/src/<package>`
+源码布局，不作为安装目录中的脚本使用。
+All four package roots expose `start_full_stack.sh`. The GUI owns the implementation;
+other entries delegate to it. These source-only scripts expect sibling packages
+under `workspace/src` and may be invoked from any current directory.
+
+```bash
+# 空运行：构建全部依赖，启动 GUI + 控制器 + 动量观测器；不连接 CAN。
+# Dry run: build dependencies, start GUI/controller/observer without CAN.
+./start_full_stack.sh
+# 真机：先停止已有控制器，再配置 CAN 并连接、使能机械臂。
+# Hardware: stop existing controllers first; configure CAN, connect and enable.
+./start_full_stack.sh --hardware
+# 已构建 / Already built
+./start_full_stack.sh --skip-build
+./start_full_stack.sh --hardware --skip-build language:=zh
+# 自定义配置 / Custom configuration
+./start_full_stack.sh --hardware controller_config:=/absolute/path/nero.yaml
+./start_full_stack.sh --help
+```
+
+数据流 / Flow: entry → colcon build --packages-up-to agxarm_control_gui →
+source install/setup.bash → optional CAN setup → GUI + Nero controller + observer.
+`agx_arm_controllers` 与 `agx_arm_math` 是被加载的库，不是额外启动的 ROS 节点。
+The controller and math packages are libraries, not extra ROS processes.
+
+默认 / Defaults: ROS Humble, robot_model=nero, namespace=/nero,
+language=zh, can_interface=can0, execute_motion=false, start_controller=true.
+真机模式配置所选 CAN 为 1000000 bit/s（需要 sudo），会先 down 再 up；
+不要在另一个 CAN 控制器运行时执行。默认 Nero YAML 为 side 安装，horizontal
+安装应通过 controller_config 传入控制器和观测器均已修改的 YAML。
+Hardware mode takes the selected CAN interface down, configures 1000000 bit/s and
+brings it up, requiring sudo. Stop other CAN controllers first. Default Nero YAML
+uses side mounting; horizontal mounting requires matching controller/observer YAML.
+
+构建失败不启动，空运行不执行 ip/sudo，不启动实体键盘发布者。
+GUI 不自动回零或复位急停，退出仍不自动禁用电机；四模式和按住点动行为保持不变。
+Failed builds prevent launch; dry run invokes neither ip nor sudo. No physical
+keyboard reader, automatic homing or E-stop reset is started. Exit does not disable
+motors automatically. Existing four-mode/direct-jog behavior is unchanged.
+
+诊断 / Diagnostics: missing sibling package → restore all four source directories;
+missing installation → omit --skip-build; missing CAN → check adapter/interface;
+GUI controls disabled → check controller state, fresh feedback and input conflicts.
+练习 / Exercise: run --help from each package, then compare dry-run arguments.
+术语 / Glossary: entry=入口; dry run=空运行; observer=观测器; bitrate=位速率.
+验证 / Validation: `nero_arm_control/test/test_full_stack_entry.py` uses fake build,
+CAN and ROS commands to check all four entries, failure handling and argument forwarding.
+来源 / Sources: `agxarm_control_gui/start_full_stack.sh`,
+`agxarm_control_gui/launch/gui.launch.py`, `nero_arm_control/scripts/setup_can.sh`,
+and the four package manifests.

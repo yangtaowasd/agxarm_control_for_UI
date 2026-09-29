@@ -27,6 +27,7 @@ class RosBridge(Node):
         self.external = None
         self.external_at = float('-inf')
         self.pending = None
+        self.last_mode_success = None
         self.pending_at = None
         self.timeout_reported = False
         try:
@@ -74,8 +75,10 @@ class RosBridge(Node):
             return
         client = self.mode_clients[mode]
         if not client.service_is_ready():
+            self.last_mode_success = False
             self.log(self.text('service_unavailable', mode=self.text(mode)))
             return
+        self.last_mode_success = None
         self.pending = client.call_async(Trigger.Request())
         self.pending_at = time.monotonic()
         self.timeout_reported = False
@@ -87,9 +90,11 @@ class RosBridge(Node):
         if self.pending.done():
             try:
                 result = self.pending.result()
+                self.last_mode_success = bool(result.success)
                 self.log(self.text('service_success' if result.success else 'service_failed',
                                    detail=result.message))
             except Exception as error:
+                self.last_mode_success = False
                 self.log(self.text('service_error', detail=str(error)))
             self.pending = None
         elif time.monotonic() - self.pending_at > 8 and not self.timeout_reported:

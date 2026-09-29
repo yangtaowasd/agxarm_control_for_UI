@@ -13,7 +13,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets as W
 import rclpy
 from rclpy.utilities import remove_ros_args
 
-from armbycontroller import teleop as K
+from nero_arm_control import teleop as K
 
 from .bridge import RosBridge
 from .model import InputGate, namespace, validate_config
@@ -37,6 +37,7 @@ QGroupBox QLabel { background: transparent; }
 QPushButton { background: #1e3045; border: 1px solid #354c66;
               padding: 9px 15px; border-radius: 8px; font-weight: bold; }
 QPushButton:hover { background: #29465a; border-color: #55b9aa; }
+QPushButton:checked { background: #23584f; border-color: #86e7d3; }
 QPushButton:pressed { background: #1e6c61; border-color: #86e7d3; }
 QPushButton:focus { border: 1px solid #87dccc; }
 QPushButton:disabled { color: #7c8ca1; background: #172334; border-color: #26374b; }
@@ -74,7 +75,7 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 
 
 class MainWindow(W.QMainWindow):
-    """Display measured telemetry and send explicitly enabled operator intent."""
+    """Display measured telemetry and send validated press-and-hold operator intent."""
 
     def __init__(self, args):
         super().__init__()
@@ -91,6 +92,10 @@ class MainWindow(W.QMainWindow):
         self.allowed = False
         self.input_context = None
         self.toggle_waiting = None
+        self.focus_active = True
+        self.desired_control = None
+        self.mode_deadline = 0.0
+        self.mode_fault = False
         self.config_path = ''
         self.config_model = args.robot_model
         self.setWindowTitle(self.text('window_title'))
@@ -157,20 +162,14 @@ class MainWindow(W.QMainWindow):
         control_layout = W.QVBoxLayout(control)
         self.summary = W.QLabel()
         control_layout.addWidget(self.summary)
-        self.arm = self.bind(W.QCheckBox(), 'enable_input')
-        self.arm.toggled.connect(self.set_armed)
-        control_layout.addWidget(self.arm)
         modes = W.QHBoxLayout()
         self.mode_buttons = []
-        for mode, label in [('normal', 'normal'), ('impedance', 'impedance'),
-                            ('admittance', 'admittance')]:
-            button = self.button(label)
+        for mode in ('joint_remote', 'impedance', 'admittance', 'cartesian_control'):
+            button = self.button(mode)
+            button.setCheckable(True)
             button.clicked.connect(lambda checked=False, m=mode: self.mode_request(m))
             modes.addWidget(button)
             self.mode_buttons.append(button)
-        self.toggle = self.button('toggle_control')
-        self.toggle.clicked.connect(lambda: self.pulse(K.KEY_MODE_TOGGLE))
-        modes.addWidget(self.toggle)
         control_layout.addLayout(modes)
         jogs = W.QHBoxLayout()
         self.joint_box = self.bind(W.QGroupBox(), 'joint_jog', 'setTitle')
@@ -318,7 +317,8 @@ class MainWindow(W.QMainWindow):
 
     def change_language(self):
         # A language change never leaves a held jog active.
-        self.arm.setChecked(False)
+        self.desired_control = None
+        self.release()
         self.language = self.language_selector.currentData()
         self.retranslate()
         self.tick()
@@ -376,6 +376,8 @@ class MainWindow(W.QMainWindow):
             self.write_log(self.text('connect_failed', detail=self.error_text(error)))
             return
         self.gate = InputGate()
+        self.desired_control = None
+        self.mode_fault = False
         self.graph_ok = False
         self.toggle_waiting = None
         self.pulse_until = 0.0
@@ -387,7 +389,8 @@ class MainWindow(W.QMainWindow):
         self.write_log(self.text('connected'))
 
     def disconnect_ros(self):
-        self.arm.setChecked(False)
+        self.desired_control = None
+        self.release()
         self.gate.disarm()
         if self.bridge is not None:
             self.bridge.destroy_node()
@@ -398,30 +401,18 @@ class MainWindow(W.QMainWindow):
         self.disconnect_button.setEnabled(False)
         self.write_log(self.text('disconnected'))
 
-    def set_armed(self, checked):
-        if checked and self.command_ready() and not self.gate.estopped:
+    def press(self, keys, *, selecting=False):
+        # Debounce is a transient rejection, never a latched input fault.
+        if time.monotonic() < self.neutral_until:
+            return False
+        if (self.command_ready(selecting=selecting)
+                and InputGate.command_allowed(keys, self.bridge.state)):
             self.gate.armed = True
             self.input_context = self.context_signature()
-            self.write_log(self.text('input_enabled'))
-        else:
-            was_armed = self.gate.armed
-            self.gate.disarm()
-            if was_armed and self.bridge and not self.conflict:
-                self.bridge.send(self.gate.keys)
-            if checked:
-                self.arm.setChecked(False)
-
-    def press(self, keys):
-        if (self.gate.armed and self.command_ready()
-                and self.input_context == self.context_signature()
-                and InputGate.command_allowed(keys, self.bridge.state)
-                and time.monotonic() >= self.neutral_until):
             self.gate.press(keys)
-            if self.bridge and self.gate.armed:
-                self.bridge.send(self.gate.keys)
+            self.bridge.send(self.gate.keys)
             return True
-        self.arm.setChecked(False)
-        self.gate.disarm()
+        self.release()
         return False
 
     def context_signature(self):
@@ -429,9 +420,11 @@ class MainWindow(W.QMainWindow):
         return tuple(state.get(key) for key in (
             'robot_model', 'execute_motion', 'interaction_mode', 'control_mode')) if state else None
 
-    def command_ready(self):
+    def command_ready(self, *, selecting=False):
         """Recheck transport and feedback at each command entry, without cached UI flags."""
-        if not self.bridge or not rclpy.ok() or self.gate.estopped or self.toggle_waiting:
+        if (not self.bridge or not rclpy.ok() or self.gate.estopped
+                or self.toggle_waiting or self.mode_fault or not self.focus_active
+                or (self.desired_control and not selecting)):
             return False
         bridge = self.bridge
         conflict = bridge.count_publishers(bridge.keyboard.topic_name) != 1
@@ -444,39 +437,71 @@ class MainWindow(W.QMainWindow):
             bridge.pending is not None, self.text)[0]
 
     def release(self):
-        self.gate.clear()
+        was_armed = self.gate.armed
+        self.gate.disarm()
         self.pulse_until = 0.0
-        # Give the backend several control ticks to observe the falling edge.
         self.neutral_until = time.monotonic() + 0.1
-        if self.bridge and self.gate.armed and not self.conflict:
+        if self.bridge and was_armed and not self.conflict:
             self.bridge.send(self.gate.keys)
 
     def pulse(self, key):
-        if key != K.KEY_MODE_TOGGLE or not self.press([key]):
+        if key != K.KEY_MODE_TOGGLE or not self.press([key], selecting=True):
             return
         self.pulse_until = time.monotonic() + 0.15
         self.toggle_waiting = self.bridge.state['control_mode']
+        self.mode_deadline = time.monotonic() + 8.0
 
     def emergency_stop(self):
         if not self.bridge:
             return
-        self.arm.setChecked(False)
+        self.release()
+        self.desired_control = None
         self.gate.emergency_stop()
         self.bridge.send(self.gate.keys)
         self.pulse_until = time.monotonic() + 0.2
         self.write_log(self.text('estop_sent'))
 
     def mode_request(self, mode):
-        if (mode in ('normal', 'impedance', 'admittance')
-                and self.gate.armed and self.command_ready()
-                and self.input_context == self.context_signature()):
-            self.release()
+        if mode not in ('joint_remote', 'cartesian_control', 'impedance', 'admittance'):
+            return
+        if not self.command_ready():
+            return
+        self.release()
+        if mode in ('impedance', 'admittance'):
             self.bridge.request_mode(mode)
-            self.arm.setChecked(False)
+            return
+        self.desired_control = 'joint' if mode == 'joint_remote' else 'ik'
+        self.mode_deadline = time.monotonic() + 8.0
+        if self.bridge.state['interaction_mode'] != 'normal':
+            self.bridge.request_mode('normal')
+        else:
+            self.bridge.last_mode_success = True
+
+    def advance_mode_selection(self, now):
+        if (self.desired_control or self.toggle_waiting) and now >= self.mode_deadline:
+            self.release()
+            self.desired_control = self.toggle_waiting = None
+            self.mode_fault = True
+            self.write_log(self.text('selection_timeout'))
+            return
+        if not self.desired_control or self.bridge.pending is not None:
+            return
+        if self.bridge.last_mode_success is False:
+            self.desired_control = None
+            return
+        state = self.bridge.state
+        if not state or state['interaction_mode'] != 'normal':
+            return
+        if state['control_mode'] == self.desired_control:
+            self.desired_control = None
+        elif not self.toggle_waiting and now >= self.neutral_until:
+            self.pulse(K.KEY_MODE_TOGGLE)
 
     def focus_changed(self, state):
-        if state != QtCore.Qt.ApplicationActive:
-            self.arm.setChecked(False)
+        self.focus_active = state == QtCore.Qt.ApplicationActive
+        if not self.focus_active:
+            self.desired_control = None
+            self.release()
 
     def tick(self):
         now = time.monotonic()
@@ -495,9 +520,8 @@ class MainWindow(W.QMainWindow):
             if self.toggle_waiting and state and state['control_mode'] != self.toggle_waiting:
                 self.toggle_waiting = None
                 self.release()
-                self.arm.setChecked(False)
             if self.gate.armed and self.input_context != self.context_signature():
-                self.arm.setChecked(False)
+                self.release()
             if now >= self.next_graph_poll:
                 self.graph_ok = (
                     self.bridge.count_publishers(self.bridge.state_topic) == 1
@@ -511,17 +535,22 @@ class MainWindow(W.QMainWindow):
             if self.gate.estopped:
                 self.allowed = False
                 reason = self.text('local_estop')
+            if (not self.allowed and self.bridge.pending is None
+                    and not (state and state.get('interaction_transitioning'))):
+                self.desired_control = None
             if not self.allowed and self.gate.armed:
-                self.arm.setChecked(False)
+                self.release()
             if self.pulse_until and now >= self.pulse_until:
                 self.release()
-                if self.toggle_waiting:
-                    self.arm.setChecked(False)
-            if self.toggle_waiting:
+            self.advance_mode_selection(now)
+            if self.toggle_waiting or self.desired_control:
                 self.allowed = False
                 reason = self.text('mode_pending')
+            if self.mode_fault or not self.focus_active:
+                self.allowed = False
+                reason = self.text('selection_timeout' if self.mode_fault else 'focus_paused')
             if self.gate.armed and not self.toggle_waiting and not self.command_ready():
-                self.arm.setChecked(False)
+                self.release()
             if self.gate.armed or (self.pulse_until and self.gate.estopped):
                 self.bridge.send(self.gate.keys)
         if self.demo:
@@ -534,19 +563,19 @@ class MainWindow(W.QMainWindow):
             self.status.setProperty('tone', tone)
             self.status.style().unpolish(self.status)
             self.status.style().polish(self.status)
-        self.arm.setEnabled(self.allowed and not self.demo)
-        enabled = self.gate.armed and self.allowed
-        for button in self.mode_buttons:
-            button.setEnabled(enabled)
+        enabled = self.allowed and not self.demo
         active = state.get('interaction_mode') if state else None
         control = state.get('control_mode') if state else None
+        selected = ('joint_remote' if control == 'joint' else 'cartesian_control') if active == 'normal' else active
+        for mode, button in zip(
+                ('joint_remote', 'impedance', 'admittance', 'cartesian_control'), self.mode_buttons):
+            button.setEnabled(enabled)
+            button.setChecked(mode == selected)
         jog_allowed = enabled and active in ('normal', 'impedance')
-        self.toggle.setEnabled(jog_allowed and not self.pulse_until)
         self.joint_box.setEnabled(jog_allowed and control == 'joint')
         self.cart_box.setEnabled(jog_allowed and control == 'ik')
         self.estop.setEnabled(self.bridge is not None)
-        self.summary.setText(self.text('summary', mode=self.text(active or '—'),
-                                       control=self.text(control or '—')))
+        self.summary.setText(self.text('selected_mode', mode=self.text(selected or '—')))
         for widgets in self.joint_widgets[-1:]:
             for widget in widgets:
                 widget.setVisible(self.robot.currentText() == 'nero')
@@ -607,7 +636,7 @@ class MainWindow(W.QMainWindow):
 
     def load_defaults(self):
         try:
-            share = Path(get_package_share_directory('agxarm_control_by_gamecontroller'))
+            share = Path(get_package_share_directory('nero_arm_control'))
             self.load_config(share / 'config' / (self.robot.currentText() + '.yaml'))
         except Exception as error:
             self.write_log(str(error))

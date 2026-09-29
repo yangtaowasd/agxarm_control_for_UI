@@ -67,7 +67,6 @@ def test_latched_state_hold_release_service_and_estop(console):
     backend.create_service(Trigger, 'arm/set_impedance_mode', change_mode)
     pump(window, backend, lambda: window.allowed)
     assert not received  # Connecting for monitoring must not publish zeros.
-    window.arm.setChecked(True)
     window.press([6, 8])
     pump(window, backend, lambda: any(msg[6] and msg[8] for msg in received))
     window.release()
@@ -81,17 +80,16 @@ def test_latched_state_hold_release_service_and_estop(console):
     window.tick()
     window.focus_changed(QtCore.Qt.ApplicationInactive)
     assert not window.gate.armed
-    window.arm.setChecked(True)
+    window.focus_changed(QtCore.Qt.ApplicationActive)
     window.mode_request('impedance')
     assert not window.gate.armed
     pump(window, backend, lambda: window.bridge.pending is None and
          window.bridge.state['interaction_mode'] == 'impedance')
     assert 'test impedance accepted' in window.log.toPlainText()
     window.neutral_until = 0
-    window.arm.setChecked(True)
     window.pulse(11)
     assert window.toggle_waiting == 'joint'
-    window.mode_request('normal')
+    window.mode_request('joint_remote')
     assert window.bridge.pending is None
     window.press([0, 8])
     assert not window.gate.armed
@@ -101,7 +99,6 @@ def test_latched_state_hold_release_service_and_estop(console):
     assert not window.gate.armed
     window.bridge.state['control_mode'] = 'joint'
     window.tick()
-    window.arm.setChecked(True)
     # Feedback/mode changes between UI refresh and click are checked synchronously.
     window.bridge.state['emergency_stopped'] = True
     window.allowed = True
@@ -123,13 +120,15 @@ def test_conflicting_publisher_and_stale_feedback_disarm(console):
     sample = JointState(position=[0.] * 7, velocity=[0.] * 7, effort=[0.] * 7)
     feedback.publish(sample)
     pump(window, backend, lambda: window.allowed)
-    window.arm.setChecked(True)
+    window.neutral_until = 0
+    assert window.press([0, 8])
     window.bridge.feedback_at = time.monotonic() - 1
     window.tick()
     assert not window.allowed and not window.gate.armed
     status.publish(String(data=json.dumps(state(execute_motion=False))))
     pump(window, backend, lambda: window.allowed)
-    window.arm.setChecked(True)
+    window.neutral_until = 0
+    assert window.press([0, 8])
     competitor = backend.create_publisher(Int32MultiArray, 'arm_keyboard_state', 10)
     pump(window, backend, lambda: window.conflict)
     assert not window.gate.armed and not window.allowed
@@ -146,7 +145,12 @@ def test_preview_and_model_defaults():
     app.processEvents()
     assert window.ns.text() == '/nero'
     assert window.config_path.endswith('/nero.yaml')
-    assert not window.arm.isEnabled()
+    assert not hasattr(window, 'arm')
+    assert [button.text() for button in window.mode_buttons] == [
+        '关节遥控', '阻抗控制', '导纳控制', '笛卡尔控制'
+    ]
+    assert len(window.mode_buttons) == 4
+    assert not any(button.isEnabled() for button in window.mode_buttons)
     window.robot.setCurrentText('piper_l')
     assert window.config_path.endswith('/piper_l.yaml')
     assert window.ns.text() == '/piper_l'

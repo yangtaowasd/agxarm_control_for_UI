@@ -6,8 +6,8 @@ import re
 
 import yaml
 
-from armbycontroller.teleop import KEY_COUNT, KEY_ESTOP
-from armbycontroller import teleop as K
+from nero_arm_control.teleop import KEY_COUNT, KEY_ESTOP
+from nero_arm_control import teleop as K
 
 from .i18n import LocalizedError, translate
 

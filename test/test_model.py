@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from armbycontroller.teleop import ArmJointJogState, KEY_COUNT, KEY_ESTOP
+from nero_arm_control.teleop import ArmJointJogState, KEY_COUNT, KEY_ESTOP
 from agxarm_control_gui.model import InputGate, namespace, parse_state, validate_config
 
 

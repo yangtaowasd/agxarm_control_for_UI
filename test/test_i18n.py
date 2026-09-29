@@ -31,7 +31,7 @@ def test_language_switch_retains_config_disarms_and_keeps_estop_visible():
     path = window.config_path
     for index, language in enumerate(LANGUAGES):
         window.allowed = True
-        window.arm.setChecked(True)
+        window.gate.armed = True
         window.gate.press([0, 8])
         window.language_selector.setCurrentIndex(index)
         window.change_language()

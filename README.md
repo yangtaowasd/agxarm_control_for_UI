@@ -1,18 +1,18 @@
 # AGX Arm GUI
 
 独立 ROS 2 / PyQt5 操作台，默认 **Nero / `/nero` / `nero.yaml`**，可切换 Piper-L。
-控制器来自同级 `agxarm_control_by_gamecontroller` 包，本包不直接访问 CAN。
+控制器来自同级 `nero_arm_control` 包，本包不直接访问 CAN。
 
 Independent ROS 2 / PyQt5 console. Defaults to **Nero**, namespace `/nero`, and
 `nero.yaml`. Piper-L is selectable. All hardware access stays in the sibling
-`agxarm_control_by_gamecontroller` package.
+`nero_arm_control` package.
 
 功能 / Features:
 
 - 七轴 Nero / 六轴 Piper-L 按住点动，关节与笛卡尔切换。
   Hold-to-jog joint and Cartesian controls for seven/six axes.
-- 普通、阻抗、导纳模式服务；显示实际返回结果和控制器状态。
-  Normal, impedance and admittance services with actual results.
+- 关节遥控、阻抗控制、导纳控制、笛卡尔控制四个入口；显示确认后的实际模式。
+  Four operator modes with confirmed controller state.
 - 关节位置、速度、实测力矩、观测外力矩、事件日志。
   Joint positions, velocities, measured torques, estimated external torques and events.
 - 软件急停、窗口失焦取消使能、反馈过期锁定、输入发布者冲突检查。
@@ -32,7 +32,8 @@ dependencies. Use the system Python with the ROS environment sourced.
 ```bash
 cd /home/yang/demo_ws
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-up-to agxarm_control_gui
+colcon build --packages-up-to agxarm_control_gui --cmake-force-configure \
+  --cmake-args -DAMENT_CMAKE_SYMLINK_INSTALL=OFF
 source install/setup.bash
 ```
 
@@ -75,10 +76,10 @@ Do not start a second controller when attaching. Stop other input publishers on 
 same topic; the GUI locks input when another publisher is detected. This launch does
 not start the physical keyboard reader.
 
-界面启动后先检查状态，再勾选“启用 GUI 操作”。松开点动按钮、切走窗口、状态异常
-都会清除输入或取消使能，恢复连接后需重新勾选。模式请求后也需重新勾选。
-Check controller status before enabling GUI input. Release clears jog input; focus
-loss and faults disarm. Re-enable explicitly after recovery or a mode request.
+检查状态正常后，直接按住点动按钮即可操作，无需勾选启用。松开、失焦或状态异常
+会清除当前输入；恢复后重新按下按钮即可，不会自动恢复旧动作。
+When ready, hold a jog button directly. Release, focus loss or a fault clears input;
+press again after recovery. Previous commands never resume automatically.
 
 关闭 GUI 只释放输入；不会自动退出阻抗/导纳、断开 CAN 或停止由 launch 启动的控制器。
 控制器结束仍由启动终端的 Ctrl+C 管理。软件急停需要健康的 ROS/控制器路径，不能代替
@@ -124,3 +125,5 @@ Chinese, Japanese and English are selectable at the top right; defaults are Chin
 mode changes disarm held input, joint/Cartesian commands cannot cross modes, and
 unconfirmed joint/IK toggles block new commands. See the study guide, section 14.
 # agxarm_control_for_UI
+
+控制链路 / Control path: GUI → `nero_arm_control` → `agx_arm_controllers` → `agx_arm_math`.
